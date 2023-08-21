@@ -1,0 +1,79 @@
+#%%
+import numpy as np
+import pandas as pd
+import scanpy as sc
+import scanpy.external as sce
+import matplotlib as mpl
+import matplotlib.pyplot as pl
+mpl.use('TkAgg')
+
+#%%
+sc.settings.verbosity = 3
+sc.logging.print_header()
+sc.settings.set_figure_params(dpi=80, facecolor='white')
+
+#%%
+results_file = 'write/test2.h5ad'
+adata = sc.read('/Users/deviationism/Downloads/test2_paga.h5ad')
+adata.X = adata.X.astype('float64')
+adata
+
+#%%
+stage = ['PF3D7-0935900', 'PF3D7-0402000', 'PF3D7-0310400', 'PF3D7-1113000',
+         'PF3D7-1126700', 'PF3D7-1301600', 'PF3D7-0406200']
+sex = ['PF3D7-1222600', 'PF3D7-0302200']
+
+#%% neighbors
+sc.pp.neighbors(adata, n_neighbors=15, n_pcs=30)
+sc.tl.diffmap(adata)
+sc.pp.neighbors(adata, n_neighbors=15, use_rep='X_diffmap')
+
+#%% paga
+sc.tl.paga(adata, groups='celltype_c')
+sc.pl.paga(adata, color='celltype_c')
+
+#%%
+sc.pl.paga_compare(
+    adata, threshold=0.03, title='', right_margin=0.2, size=10, edge_width_scale=0.5,
+    legend_fontsize=12, fontsize=12, frameon=False, edges=True, basis='X_phate')
+
+#%%
+adata.uns['iroot'] = np.flatnonzero(adata.obs['celltype_c'] == 'E.T.6')[0]
+sc.tl.dpt(adata)
+sce.pl.phate(adata, color=['celltype_c', 'dpt_pseudotime'], legend_loc='on data')
+
+#%%
+paths = [('path1', ["E.T.7", "E.T.0", "L.T.3", "L.T.9", "L.T/E.S.2", "L.T/E.S.13",
+                    "E.S.5", "E.S.1", "M.S.8", "M.S/L.S.11", "L.S.4"]),
+         ('path2', ["E.T.7", "E.T.0", "L.T.3", "L.T.9", "L.T/E.S.2", "L.T/E.S.13",
+                    "E.S.5", "E.S/M.S.10", "L.S.6"])]
+
+#%%
+adata.obs['distance'] = adata.obs['dpt_pseudotime']
+adata.obs['clusters'] = adata.obs['celltype_c']
+adata.uns['clusters_colors'] = adata.uns['celltype_c_colors']
+
+#%%
+_, axs = pl.subplots(ncols=2, figsize=(6, 2.5), gridspec_kw={'wspace': 0.05, 'left': 0.12})
+pl.subplots_adjust(left=0.05, right=0.98, top=0.82, bottom=0.2)
+for ipath, (descr, path) in enumerate(paths):
+    _, data = sc.pl.paga_path(
+        adata, path, stage,
+        use_raw=False,
+        show_node_names=False,
+        ax=axs[ipath],
+        ytick_fontsize=12,
+        left_margin=0.15,
+        n_avg=50,
+        annotations=['distance'],
+        show_yticks=True if ipath==0 else False,
+        show_colorbar=False,
+        color_map='Greys',
+        groups_key='clusters',
+        color_maps_annotations={'distance': 'viridis'},
+        title='{} path'.format(descr),
+        return_data=True,
+        show=False)
+    data.to_csv('./write/paga_path_{}.phate.csv'.format(descr))
+pl.savefig('./figures/paga_path_dd2.phate.pdf')
+pl.show()
