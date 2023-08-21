@@ -1,0 +1,101 @@
+sigEnd_up <- subset(sigEnd, logFC1_2 > 0) # 300
+sigEnd_down <- subset(sigEnd, logFC1_2 < 0) # 348
+sigES_up <- subset(sigES, avg_log2FC > 0) # 66
+sigES_down <- subset(sigES, avg_log2FC < 0) # 344
+sigLS_up <- subset(sigLS, avg_log2FC > 0) # 191
+sigLS_down <- subset(sigLS, avg_log2FC < 0) # 1340
+sigS_up <- subset(sigS, avg_log2FC > 0) # 44
+sigS_down <- subset(sigS, avg_log2FC < 0) # 559
+sigW2_up <- subset(sigW2, logfc > 0) # 430
+sigW2_down <- subset(sigW2, logfc < 0) # 36
+sigW3_up <- subset(sigW3, logfc > 0) # 318
+sigW3_down <- subset(sigW3, logfc < 0) # 427
+sigW4_up <- subset(sigW4, logfc > 0) # 371
+sigW4_down <- subset(sigW4, logfc < 0) # 458
+
+# Venn
+library(venn)  
+library(VennDiagram)
+
+sigTragedy <- unique(c(row.names(sigW3), row.names(sigW4), row.names(sigW5)))
+de.all <- list(Seurat=row.names(sigS), TradeSeq=row.names(sigEar_48), TrAGEdy=sigTragedy)
+de.tail <- list(Seurat.End=row.names(sigLS), TradeSeq.End=row.names(sigEnd))
+de.head <- list(TradeSeq.early=row.names(sigEar_45), Seurat.ES=row.names(sigES),
+                TrAGEdy.early=row.names(sigW2))
+venn(de.all, zcolor='style', opacity = 0.3, box = F, ilcs = 1, sncs = 1)
+venn(de.tail, zcolor='style', opacity = 0.3, box = F, ilcs = 1, sncs = 1)
+venn(de.head, zcolor='style', opacity = 0.3, box = F, ilcs = 1, sncs = 1)
+de.tail_lup <- list(Seurat.End=row.names(sigLS_up), TradeSeq.End=row.names(sigEnd_up))
+de.tail_sup <- list(Seurat.End=row.names(sigLS_down), TradeSeq.End=row.names(sigEnd_down))
+de.head_lup <- list(TradeSeq.early=row.names(sigEar_45), 
+                Seurat.early=row.names(sigES_up), TrAGEdy.early=row.names(sigW2_up))
+de.head_sup <- list(TradeSeq.early=row.names(sigEar_45), 
+                Seurat.early=row.names(sigES_down), TrAGEdy.early=row.names(sigW2_down))
+venn(de.tail_lup, zcolor='style', opacity = 0.3, box = F, ilcs = 1, sncs = 1)
+venn(de.tail_sup, zcolor='style', opacity = 0.3, box = F, ilcs = 1, sncs = 1)
+venn(de.head_lup, zcolor='style', opacity = 0.3, box = F, ilcs = 1, sncs = 1)
+venn(de.head_sup, zcolor='style', opacity = 0.3, box = F, ilcs = 1, sncs = 1)
+## find intersection, union...
+interg <- function(venn_list, csv_name=NULL){
+  inter <- get.venn.partitions(venn_list)
+  n <- length(venn_list)
+  if (!is.null(csv_name)){
+    for (i in 1:nrow(inter)) inter[i,'values'] <- paste(inter[[i,'..values..']], collapse = '|')
+    inter_new <- inter[, -c(n+1, n+2)]
+    write.csv(inter_new, csv_name, row.names = FALSE, sep = ',', quote = FALSE)
+  }
+  inter_new <- inter[, -(n+1)]
+  return(inter_new)
+}
+inter_all <- interg(de.all, "final_3_dd2_Venn/de_all.csv")
+inter_tail <- interg(de.tail, "final_3_dd2_Venn/de_tail.csv")
+inter_head <- interg(de.head, "final_3_dd2_Venn/de_head.csv")
+
+# GO plot
+library(ggplot2)
+library(dplyr)
+## table from Plasmodb website GO enrichment anaylsis results
+go_BP <- read.delim("/Users/deviationism/Downloads/S_down_bp.tsv", header=TRUE)
+top_bp <- head(go_BP[order(go_BP$Bonferroni), ], 10)
+top_bp_1 <- top_bp[, c("Name", "Bonferroni")]
+top_bp_1$group <- rep("bp",10)
+top_bp_1 <- arrange(top_bp_1, desc(Bonferroni))
+go_CC <- read.delim("/Users/deviationism/Downloads/S_down_cc.tsv", header=TRUE)
+top_cc <- head(go_CC[order(go_CC$Bonferroni), ], 10)
+top_cc_1 <- top_cc[, c("Name", "Bonferroni")]
+top_cc_1$group <- rep("cc",10)
+top_cc_1 <- arrange(top_cc_1, desc(Bonferroni))
+go_MF <- read.delim("/Users/deviationism/Downloads/S_down_mf.tsv", header=TRUE)
+top_mf <- head(go_MF[order(go_MF$Bonferroni), ], 10)
+top_mf_1 <- top_mf[, c("Name", "Bonferroni")]
+top_mf_1$group <- rep("mf",10)
+top_mf_1 <- arrange(top_mf_1, desc(Bonferroni))
+top <- rbind(top_mf_1, top_cc_1, top_bp_1)
+top$Name <- factor(top$Name, levels = top$Name)
+ggplot(top, aes(x=Name, y=-log10(Bonferroni), fill=group)) +
+  geom_col() +
+  coord_flip() + 
+  labs(title="Top 10 GO Terms", x="Molecular Function  Cellular Component  Biological Process", y="-log10(p.adj)") +
+  theme_minimal()
+go_BP <- read.delim("/Users/deviationism/Downloads/S_up_bp.tsv", header=TRUE)
+top_bp <- head(go_BP[order(go_BP$Bonferroni), ], 10)
+top_bp_1 <- top_bp[, c("Name", "Bonferroni")]
+top_bp_1$group <- rep("bp",10)
+top_bp_1 <- arrange(top_bp_1, desc(Bonferroni))
+go_CC <- read.delim("/Users/deviationism/Downloads/S_up_cc.tsv", header=TRUE)
+top_cc <- head(go_CC[order(go_CC$Bonferroni), ], 10)
+top_cc_1 <- top_cc[, c("Name", "Bonferroni")]
+top_cc_1$group <- rep("cc",10)
+top_cc_1 <- arrange(top_cc_1, desc(Bonferroni))
+go_MF <- read.delim("/Users/deviationism/Downloads/S_up_mf.tsv", header=TRUE)
+top_mf <- head(go_MF[order(go_MF$Bonferroni), ], 10)
+top_mf_1 <- top_mf[, c("Name", "Bonferroni")]
+top_mf_1$group <- rep("mf",10)
+top_mf_1 <- arrange(top_mf_1, desc(Bonferroni))
+top <- rbind(top_mf_1, top_cc_1, top_bp_1)
+top$Name <- factor(top$Name, levels = top$Name)
+ggplot(top, aes(x=Name, y=-log10(Bonferroni), fill=group)) +
+  geom_col() +
+  coord_flip() + 
+  labs(title="Top 10 GO Terms", x="Molecular Function  Cellular Component  Biological Process", y="-log10(p.adj)") +
+  theme_minimal()
