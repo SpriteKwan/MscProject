@@ -43,10 +43,10 @@ sc.tl.dpt(adata)
 sce.pl.phate(adata, color=['celltype_c', 'dpt_pseudotime'], legend_loc='on data')
 
 #%%
-paths = [('path1', ["E.T.7", "E.T.0", "L.T.3", "L.T.9", "L.T/E.S.2", "L.T/E.S.13",
-                    "E.S.5", "E.S.1", "M.S.8", "M.S/L.S.11", "L.S.4"]),
-         ('path2', ["E.T.7", "E.T.0", "L.T.3", "L.T.9", "L.T/E.S.2", "L.T/E.S.13",
-                    "E.S.5", "E.S/M.S.10", "L.S.6"])]
+paths = [('path1', ["E.T.3", "E.T.6", "L.T.10", "L.T.0", "L.T/E.S.5", "E.S.11",
+                   "E.S.1", "E.S/M.S.7", "M.S.8", "M.S.2", "M.S/L.S.9"]),
+         ('path2', ["E.T.6", "L.T.10", "L.T.0", "L.T/E.S.5", "E.S.11",
+                   "E.S.1", "E.S/M.S.7", "M.S.8", "M.S.2", "M.S/L.S.9"])]
 
 #%%
 adata.obs['distance'] = adata.obs['dpt_pseudotime']
