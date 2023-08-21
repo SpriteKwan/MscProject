@@ -1,0 +1,185 @@
+library(Seurat)
+library(dplyr)
+library(phateR)
+library(ggplot2)
+library(tidyverse)
+library(magrittr)
+library(glmGamPoi)
+library（sctransform)
+
+# process original rds
+Pf <- readRDS("Pf.combined.rds")
+DefaultAssay(Pf) <- "RNA"
+Pf@assays[["integrated"]] <- NULL
+Pf@reductions[["pca"]] <- NULL
+Pf@reductions[["umap"]] <- NULL
+Pf@meta.data[["integrated_snn_res.0.1"]] <- NULL
+Pf@meta.data[["integrated_snn_res.0.12"]] <- NULL
+Pf@meta.data[["integrated_snn_res.0.13"]] <- NULL
+Pf@meta.data[["integrated_snn_res.0.14"]] <- NULL
+all.list <- SplitObject(Pf, split.by = "condition_strain_rep")
+dd2_serum_2 <- all.list[["serum_Dd2_2"]]
+dd2_serum_2[["percent.MT"]] <- PercentageFeatureSet(dd2_serum_2, pattern = "^PF3D7-MI")
+dd2_mFA_2 <- all.list[["mFA_Dd2_2"]]
+dd2_mFA_2[["percent.MT"]] <- PercentageFeatureSet(dd2_mFA_2, pattern = "^PF3D7-MI")
+remove(Pf)
+remove(all.list)
+
+# 1th SCT & remove gametocyte clusters
+dd2_serum_2 %<>% SCTransform(method = "glmGamPoi", vars.to.regress = "percent.MT",
+                             vst.flavor = "v2", verbose = FALSE) %<>% 
+  RunPCA(verbose = FALSE) %<>% 
+  RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %<>% 
+  FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %<>% 
+  FindClusters(resolution = 0.5, verbose = FALSE)
+dd2_mFA_2 %<>% SCTransform(method = "glmGamPoi", vars.to.regress = "percent.MT",
+                           vst.flavor = "v2", verbose = FALSE) %<>% 
+  RunPCA(verbose = FALSE) %<>% 
+  RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %<>% 
+  FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %<>% 
+  FindClusters(resolution = 0.3, verbose = FALSE)
+
+# find marker genes
+## use MAST method to find marker genes
+MAST_marker <- function(data, iden, gene_list){
+    DefaultAssay(data) <- "RNA"
+    data <- SetIdent(data, value = data@meta.data[[iden]])
+    markers <- FindAllMarkers(data, only.pos = TRUE, test.use = "MAST",
+                              min.pct = 0.25, logfc.threshold = 0.25)
+    markers %>%
+        group_by(cluster) %>%
+        slice_max(n = 2, order_by = avg_log2FC)
+    df <- data.frame()
+    for (i in 1:length(gene_list)){
+        info <- subset(markers, gene == gene_list[[i]])[,c("gene", "avg_log2FC", "p_val_adj", "cluster")]
+        if (length(row.names(info)) > 0 ){
+            info$gene_name <- names(gene_list)[i]
+            df <- rbind(df, info)
+        }
+    }
+    new <- data.frame(cluster=c(NA), annotation=c(NA), tips=c(NA))
+    for (i in levels(df$cluster)){
+        info <- subset(df, cluster == i)[,c("cluster", "gene_name", "p_val_adj")]
+        info_1 <- subset(info, p_val_adj < 9e-10)[["gene_name"]]
+        info_2 <- subset(info, p_val_adj >= 9e-10 & p_val_adj < 0.05)
+        if (length(row.names(info_2)) > 0){
+            info_2$embedding <- paste(info_2$gene_name, round(info_2$p_val_adj, 6))
+            new <- rbind(new, c(i, paste(info_1, collapse = "/"), 
+                                paste(info_2$embedding, collapse = "; ")))
+        }else{
+            new <- rbind(new, c(i, paste(info_1, collapse = "/"), ""))
+        }
+    }
+    print(new[-1,])
+    return(list(markers=markers, cluster=df, annotation=new[-1,]))
+}
+m.sct0.5 <- MAST_marker(dd2_serum_2, "SCT_snn_res.0.5", gene.stage)
+m.sct0.3 <- MAST_marker(dd2_mFA_2, "SCT_snn_res.0.3", gene.stage)
+
+# annotation
+dd2_serum_2 <- SetIdent(dd2_serum_2, value = dd2_serum_2@meta.data[["SCT_snn_res.0.5"]])
+dd2_serum_2 <- RenameIdents(dd2_serum_2, 
+                           `0` = "L.T.0", `1` = "L.T.1", `2` = "M.S.2", 
+                           `3` = "E.S.3", `4` = "M.S/L.S.4", `5` = "E.T.5",
+                           `6` = "L.T.6", `7` = "E.S.7", `8` = "E.S.8",
+                           `9` = "L.T/E.S.9", `10` = "L.T.10", 
+                           `11` = "R/L.S.11", `12` = "G.12")
+dd2_serum_2$annotated <- Idents(dd2_serum_2)
+DimPlot(dd2_serum_2)
+dd2_mFA_2 <- SetIdent(dd2_mFA_2, value = dd2_mFA_2@meta.data[["SCT_snn_res.0.3"]])
+dd2_mFA_2 <- RenameIdents(dd2_mFA_2, 
+                           `0` = "L.T.0", `1` = "E.S.1", `2` = "E.T.2", 
+                           `3` = "E.T.3", `4` = "M.S.4", `5` = "M.S/L.S.5",
+                           `6` = "E.S.6", `7` = "G.7", `8` = "G.8")
+dd2_mFA_2$annotated <- Idents(dd2_mFA_2)
+DimPlot(dd2_mFA_2)
+
+# subset to phate
+dd2_serum_2 <- SetIdent(dd2_serum_2, value = dd2_serum_2$SCT_snn_res.0.5)
+serum_subset <- subset(dd2_serum_2, idents = c(12), invert = T)
+serum_subset %<>% SCTransform(method = "glmGamPoi", vars.to.regress = "percent.MT", vst.flavor = "v2", verbose = FALSE)
+dd2_mFA_2 <- SetIdent(dd2_mFA_2, value = dd2_mFA_2$SCT_snn_res.0.3)
+mFA_subset <- subset(dd2_mFA_2, idents = c(7, 8), invert = T)
+mFA_subset %<>% SCTransform(method = "glmGamPoi", vars.to.regress = "percent.MT", vst.flavor = "v2", verbose = FALSE)
+
+# run PHATE
+data <- t(as.data.frame(serum_subset@assays[["SCT"]]@data))
+phate <- phate(data, mds_solver = 'smacof')
+clusters_12 <- cluster_phate(phate, k = 12, seed = 1201)
+ggplot(phate, aes(color = as.factor(clusters_12))) + geom_point(aes(PHATE1, PHATE2), size = 0.1)
+DefaultAssay(serum_subset) <- "SCT"
+serum_subset[["phate"]] <- CreateDimReducObject(embeddings = phate$embedding, key = "PHATE_", assay = "SCT")
+serum_subset[["phate_12"]] <- as.factor(clusters_12)
+serum_subset@reductions[["phate"]]@cell.embeddings <- serum_subset@reductions[["phate"]]@cell.embeddings * 100
+data <- t(as.data.frame(mFA_subset@assays[["SCT"]]@data))
+phate <- phate(data, mds_solver = 'smacof')
+clusters_14 <- cluster_phate(phate, k = 14, seed = 1201)
+ggplot(phate, aes(color = as.factor(clusters_14))) + geom_point(aes(PHATE1, PHATE2), size = 0.1)
+DefaultAssay(mFA_subset) <- "SCT"
+mFA_subset[["phate"]] <- CreateDimReducObject(embeddings = phate$embedding, key = "PHATE_", assay = "SCT")
+mFA_subset[["phate_14"]] <- as.factor(clusters_14)
+mFA_subset@reductions[["phate"]]@cell.embeddings <- mFA_subset@reductions[["phate"]]@cell.embeddings * 100
+
+# find marker genes and annotation 
+m.phate_12_MAST <- MAST_marker(serum_subset, "phate_12", gene.stage)
+m.phate_14_MAST <- MAST_marker(mFA_subset, "phate_14", gene.stage)
+serum_subset <- SetIdent(serum_subset, value = serum_subset@meta.data[["phate_12"]])
+serum_subset <- RenameIdents(serum_subset, 
+                           `0` = "L.T.0", `1` = "E.S.1", `2` = "M.S.2", 
+                           `3` = "E.T.3", `4` = "R.4", `5` = "L.T/E.S.5",
+                           `6` = "E.T.6", `7` = "E.S/M.S.7", `8` = "M.S.8", 
+                           `9` = "M.S/L.S.9", `10` = "L.T.10", `11` = "E.S.11")
+serum_subset$celltype_1 <- Idents(serum_subset)
+mFA_subset <- SetIdent(mFA_subset, value = mFA_subset@meta.data[["phate_14"]])
+mFA_subset <- RenameIdents(mFA_subset, 
+                           `0` = "E.T.0", `1` = "E.S.1", `2` = "L.T/E.S.2", 
+                           `3` = "L.T.3", `4` = "L.S.4", `5` = "E.S.5",
+                           `6` = "L.S.6", `7` = "E.T.7", `8` = "M.S.8", 
+                           `9` = "L.T.9", `10` = "E.S/M.S.10", `11` = "M.S/L.S.11",
+                           `12` = "R.12", `13` = "L.T/E.S.13")
+mFA_subset$celltype_1 <- Idents(mFA_subset)
+DimPlot(serum_subset, reduction = "phate", group.by = "celltype_1", label = T) + NoLegend()
+DimPlot(mFA_subset, reduction = "phate", group.by = "celltype_1", label = T) + NoLegend()
+
+# frequency
+frequency <- function(cluster_info, order){
+    df <- data.frame(t(table(cluster_info)))
+    df$Var1 <- round(table(cluster_info)/length(cluster_info)*100, 2)
+    df$Var1 <- as.numeric(df$Var1)
+    df$Freq <- as.numeric(df$Freq)
+    df$cluster_info <- factor(df$cluster_info, levels = order)
+    p <- ggplot(df, aes(x = cluster_info, y = Var1, fill = cluster_info)) + 
+        geom_bar(stat = 'identity', position = position_dodge(0.7), width = 0.5) +
+        geom_text(aes(label = Freq, vjust = -1), position = position_dodge(0.7)) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+        labs(x="Clusters", y="Frequency(%)") + NoLegend()
+    print(p)
+}
+clus_order <- c("L.R.12", "E.T.0", "E.T.7", "L.T.3", "L.T.9", "L.T/E.S.2", "L.T/E.S.13",
+                "E.S.1", "E.S.5", "E.S/M.S.10", "M.S.8", "M.S/L.S.11", "L.S.4", "L.S.6")
+frequency(mFA_subset@meta.data[["celltype_1"]], clus_order)
+
+clus_order <- c("L.R.4", "E.T.3", "E.T.6", "L.T.0", "L.T.10", "L.T/E.S.5", 
+                "E.S.1", "E.S.11", "E.S/M.S.7", "M.S.2", "M.S.8", "M.S/L.S.9")
+frequency(serum_subset@meta.data[["celltype_1"]], clus_order)
+
+# subset dataset for TI
+test1 <- subset(mFA_subset, idents="L.R.12", invert=T)
+test2 <- subset(serum_subset, idents = "L.R.4", invert=T)
+test1 %<>% SCTransform(method = "glmGamPoi", vars.to.regress = "percent.MT",
+                       vst.flavor = "v2", verbose = FALSE) %<>% 
+  RunPCA(verbose = FALSE) %<>% 
+  RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE)
+test2 %<>% SCTransform(method = "glmGamPoi", vars.to.regress = "percent.MT",
+                       vst.flavor = "v2", verbose = FALSE) %<>% 
+  RunPCA(verbose = FALSE) %<>% 
+  RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE)
+
+## generate AnnData for PAGA
+library(SeuratDisk)
+test1@meta.data[["celltype_c"]] <- as.character(test1@meta.data[["celltype_1"]]) # factor format does not suit for PAGA
+test2@meta.data[["celltype_c"]] <- as.character(test2@meta.data[["celltype_1"]])
+SaveH5Seurat(test1, filename = "test1_paga")
+Convert("test1_paga.h5seurat", dest = "h5ad")
+SaveH5Seurat(test2, filename = "test2_paga")
+Convert("test2_paga.h5seurat", dest = "h5ad")
