@@ -1,0 +1,91 @@
+library(Seurat)
+library(dplyr)
+library(slingshot)
+library(SingleCellExperiment)
+library(ggplot2)
+library(tidyverse)
+library(cowplot)
+library(Polychrome)
+library(monocle3)
+library(patchwork)
+library(RColorBrewer)
+
+# Slingshot
+trajectory <- function(data, cluster, reduction, start = NULL, end = NULL){
+    reduction <- toupper(reduction)
+    sce <- as.SingleCellExperiment(data, assay = "RNA")
+    clusting <- sce@colData@listData[[cluster]]
+    sce <- slingshot(sce, reducedDim = reduction, 
+                     clusterLabels = clusting, start.clus = start, end.clus = end)
+    lnes <- getLineages(reducedDim(sce, reduction), clusting, 
+                        dist.method = "slingshot", start.clus = start, end.clus = end)
+    print(lnes@metadata$lineages)
+    my_color <- createPalette(length(levels(clusting)), c("#010101", "#ff0000"), M=1000)
+    names(my_color) <- unique(as.character(clusting))
+    plot(reducedDim(sce, reduction), col = my_color[as.character(clusting)], 
+         pch=16, asp = 1)
+    lines(SlingshotDataSet(lnes), lwd=2, type = 'lineages', col = c("black"))
+    crv <- getCurves(lnes)
+    plot(reducedDim(sce, reduction), col = my_color[as.character(clusting)], 
+         pch=16, asp = 1)
+    lines(SlingshotDataSet(crv), lwd=2, col = c("black"))
+    return(list(sce=sce, lnes=lnes, crv=crv))
+}
+a <- trajectory(test2, "celltype_1", "phate", "E.T.3", "M.S/L.S.9")
+b <- trajectory(test1, "celltype_1", "phate", "E.T.7", c("L.S.4","L.S.6"))
+
+# Monocle3
+## test1
+cds <- SeuratWrappers::as.cell_data_set(test1)
+cds <- cluster_cells(cds, resolution=1.5e-3)
+plot_cells(cds, color_cells_by = "cluster", show_trajectory_graph = FALSE)
+cds <- learn_graph(cds, use_partition = TRUE, verbose = FALSE)
+plot_cells(cds, color_cells_by = "cluster", label_groups_by_cluster=FALSE,
+           label_leaves=FALSE, label_branch_points=FALSE)
+cds <- order_cells(cds, root_cells = colnames(cds[,clusters(cds) == 2])) # need change
+plot_cells(cds, color_cells_by = "pseudotime", group_cells_by = "cluster",
+           label_cell_groups = FALSE, label_groups_by_cluster=FALSE,
+           label_leaves=FALSE, label_branch_points=FALSE, label_roots = FALSE,
+           trajectory_graph_color = "grey60")
+object <- test1
+object@reductions[["umap"]]@cell.embeddings <- object@reductions[["phate"]]@cell.embeddings
+    colnames(object@reductions[["umap"]]@cell.embeddings) <- c("UMAP_1", "UMAP_2") # use phate slot instead of umap slot to perform monocle3 on phate embedding
+cds <- SeuratWrappers::as.cell_data_set(object)
+cds <- cluster_cells(cds, resolution=1.5e-3)
+cds@clusters@listData[["UMAP"]][["clusters"]] <- object@active.ident # check idents celltype_1
+plot_cells(cds, color_cells_by = "cluster", show_trajectory_graph = FALSE)
+cds <- learn_graph(cds, use_partition = TRUE, verbose = FALSE)
+plot_cells(cds, color_cells_by = "cluster", label_groups_by_cluster=FALSE,
+           label_leaves=FALSE, label_branch_points=FALSE)
+cds <- order_cells(cds, root_cells = colnames(cds[,clusters(cds) == "R/E.T.7"])) # need change
+plot_cells(cds, color_cells_by = "pseudotime", group_cells_by = "cluster",
+           label_cell_groups = FALSE, label_groups_by_cluster=FALSE,
+           label_leaves=FALSE, label_branch_points=FALSE, label_roots = FALSE,
+           trajectory_graph_color = "grey60")
+## test2
+cds <- SeuratWrappers::as.cell_data_set(test2)
+cds <- cluster_cells(cds, resolution=1.5e-3)
+plot_cells(cds, color_cells_by = "cluster", show_trajectory_graph = FALSE)
+cds <- learn_graph(cds, use_partition = TRUE, verbose = FALSE)
+plot_cells(cds, color_cells_by = "cluster", label_groups_by_cluster=FALSE,
+           label_leaves=FALSE, label_branch_points=FALSE)
+cds <- order_cells(cds, root_cells = colnames(cds[,clusters(cds) == 2])) # need change
+plot_cells(cds, color_cells_by = "pseudotime", group_cells_by = "cluster",
+           label_cell_groups = FALSE, label_groups_by_cluster=FALSE,
+           label_leaves=FALSE, label_branch_points=FALSE, label_roots = FALSE,
+           trajectory_graph_color = "grey60")
+object <- test2
+object@reductions[["umap"]]@cell.embeddings <- object@reductions[["phate"]]@cell.embeddings
+    colnames(object@reductions[["umap"]]@cell.embeddings) <- c("UMAP_1", "UMAP_2") # use phate slot instead of umap slot to perform monocle3 on phate embedding
+cds <- SeuratWrappers::as.cell_data_set(object)
+cds <- cluster_cells(cds, resolution=1.5e-3)
+cds@clusters@listData[["UMAP"]][["clusters"]] <- object@active.ident # check idents celltype_1
+plot_cells(cds, color_cells_by = "cluster", show_trajectory_graph = FALSE)
+cds <- learn_graph(cds, use_partition = TRUE, verbose = FALSE)
+plot_cells(cds, color_cells_by = "cluster", label_groups_by_cluster=FALSE,
+           label_leaves=FALSE, label_branch_points=FALSE)
+cds <- order_cells(cds, root_cells = colnames(cds[,clusters(cds) == "E.T.6"])) # need change
+plot_cells(cds, color_cells_by = "pseudotime", group_cells_by = "cluster",
+           label_cell_groups = FALSE, label_groups_by_cluster=FALSE,
+           label_leaves=FALSE, label_branch_points=FALSE, label_roots = FALSE,
+           trajectory_graph_color = "grey60")
