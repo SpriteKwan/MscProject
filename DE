@@ -1,0 +1,180 @@
+library(Seurat)
+library(dplyr)
+library(slingshot)
+library(SingleCellExperiment)
+library(ggplot2)
+library(tidyverse)
+library(tradeSeq)
+
+# tradeSeq
+## easy to plot
+plotTwo <- function(sce, crv, counts, sigGenes, comb=TRUE){
+  for (sigGene in sigGenes){
+    p1 <- plotSmoothers(sce, counts, gene = sigGene)
+    p2 <- plotGeneCount(crv, counts, gene = sigGene) + labs(color=sigGene)
+    if (comb){print(p1 + p2)} else{print(p1); print(p2)}
+  }
+}
+counts <- as.matrix(test1@assays[["RNA"]]@counts)
+crv <- as.SingleCellExperiment(test1, "RNA")
+clusting <- crv@colData@listData[["celltype_1"]]
+crv <- slingshot(crv, reducedDim = "PHATE", clusterLabels = clusting, 
+                 start.clus = "E.T.7", end.clus = c("L.S.4","L.S.6"))
+crv <- SlingshotDataSet(crv)
+## set version
+RNGversion("3.5.0")
+palette(brewer.pal(8, "Dark2"))
+## Fit negative binomial model
+set.seed(5)
+icMat <- evaluateK(counts = counts, sds = crv, k = 3:10, 
+                   nGenes = 200, verbose = T)
+set.seed(7)
+pseudotime <- slingPseudotime(crv, na = FALSE)
+cellWeights <- slingCurveWeights(crv)
+sce <- fitGAM(counts = counts, pseudotime = pseudotime, cellWeights = cellWeights,
+              nknots = 8, verbose = FALSE)
+table(rowData(sce)$tradeSeq$converged)
+## earlyDETest
+plotGeneCount(curve = crv, counts = counts,
+              clusters = apply(slingClusterLabels(crv), 1, which.max),
+              models = sce)
+earlyDERes_45 <- earlyDETest(sce, knots = c(4, 5), l2fc = 0.5) # around bifurcation point
+earlyDERes_45$p_adj <- p.adjust(earlyDERes_45$pvalue, method = "bonferroni")
+sigEar_45 <- subset(earlyDERes_45, p_adj < 0.05) # 69
+earlyDERes_48 <- earlyDETest(sce, knots = c(4, 8), l2fc = 0.5) # after bifurcation point to the end
+earlyDERes_48$p_adj <- p.adjust(earlyDERes_48$pvalue, method = "bonferroni")
+sigEar_48 <- subset(earlyDERes_48, p_adj < 0.05) # 1587
+## end
+endRes <- diffEndTest(sce, l2fc = 0.5)
+endRes$p_adj <- p.adjust(endRes$pvalue, method = "bonferroni")
+sigEnd <- subset(endRes, abs(logFC1_2) > 0.5 & p_adj < 0.05) # 648
+## pattern
+patternRes <- patternTest(sce, l2fc = 0.5)
+patternRes$p_adj <- p.adjust(patternRes$pvalue, method = "bonferroni")
+sigPat <- subset(patternRes, p_adj < 0.05) # 3586
+## combining patternTest with diffEndTest results
+sigEnd$Gene <- rownames(sigEnd)
+sigEnd$end <- sigEnd$waldStat
+sigEnd_c <- sigEnd[, c("Gene", "end", "logFC1_2")]
+sigPat$Gene <- rownames(sigPat)
+sigPat$pattern <- sigPat$waldStat
+sigPat_c <- sigPat[, c("Gene", "pattern", "fcMedian")]
+sigCompare <- merge(sigPat_c, sigEnd_c, by = "Gene", all = FALSE) # 
+sigCompare$transientScore <- rank(-sigCompare$end, ties.method = "min")^2 + 
+  rank(sigCompare$pattern, ties.method = "random")^2
+sigSC <- head(sigCompare[order(sigCompare$transientScore, decreasing = TRUE), "Gene"], n = 10)
+ggplot(sigCompare, aes(x = log(pattern), y = log(end))) +
+  geom_point(aes(col = transientScore)) +
+  geom_label_repel(data = subset(sigCompare, Gene %in% sigSC), 
+            aes(label = Gene), 
+            box.padding = 0.5, 
+            point.padding = 0.5,
+            segment.color = 'grey50') +
+  labs(x = "patternTest Wald Statistic (log scale)",
+       y = "diffEndTest Wald Statistic (log scale)") +
+  scale_color_continuous(low = "yellow", high = "red") +
+  theme_classic()
+
+# TrAGEDy
+source("~/TrAGEDy_functions.R")
+test1 <- SetIdent(test1, value = test1@meta.data[["celltype_1"]])
+line1 <- subset(test1, idents = c("E.S.5", "E.S.1", "M.S.8", "M.S/L.S.11", "L.S.4"))
+line2 <- subset(test1, idents = c("E.S.5", "E.S/M.S.10", "L.S.6"))
+line1 <- as.SingleCellExperiment(line1, assay = "RNA")
+line1 <- slingshot(line1, reducedDim = "PHATE", 
+                   start.clus = "E.S.5", end.clus = "L.S.4", 
+                   clusterLabels = line1@colData@listData[["celltype_1"]])
+line2 <- as.SingleCellExperiment(line2, assay = "RNA")
+line2 <- slingshot(line2, reducedDim = "PHATE", 
+                   start.clus = "E.S.5", end.clus = "L.S.6", 
+                   clusterLabels = line2@colData@listData[["celltype_1"]])
+features <- test1@assays[["SCT"]]@var.features
+## set interpolated points
+pseudo_end <- min(c(max(line1$slingPseudotime_1, line2$slingPseudotime_1)))
+window <- pseudo_end / 45
+line1_pseudotime <- matrix(line1$slingPseudotime_1, dimnames =list(line1@colData@rownames))
+line2_pseudotime <- matrix(line2$slingPseudotime_1, dimnames =list(line2@colData@rownames))
+line1_ID <- data.frame(line1$celltype_1, row.names =line1@colData@rownames) # maybe need change
+line2_ID <- data.frame(line2$celltype_1, row.names =line2@colData@rownames) # maybe need change
+## Create Interpolated points across pseudotime 
+line1_tree <- nodePseudotime(line1_pseudotime,line1_ID, 50, "line1")
+line2_tree <- nodePseudotime(line2_pseudotime,line2_ID, 50, "line2")
+line1_pseudo <- data.frame("ID" = line1@colData@rownames, 
+                           "pseudo" = line1$slingPseudotime_1)
+line1_node_pseudo <- data.frame("ID" = row.names(line1_tree$pseudotime), 
+                                "pseudo" = line1_tree$pseudotime$pseudotime)
+line2_pseudo <- data.frame("ID" = line2@colData@rownames, 
+                           "pseudo" = line2$slingPseudotime_1)
+line2_node_pseudo <- data.frame("ID" = row.names(line2_tree$pseudotime), 
+                                "pseudo" = line2_tree$pseudotime$pseudotime)
+line1_node_pseudotime <- matrix(line1_tree$pseudotime$pseudotime, 
+                                dimnames = list(row.names(line1_tree$pseudotime)), )
+line2_node_pseudotime <- matrix(line2_tree$pseudotime$pseudotime, 
+                                dimnames = list(row.names(line2_tree$pseudotime)), )
+## Get gene expression values for the interpolated points
+line1_node_exp_mtx <- nodeExpressionEstimate(line1@assays@data@listData$logcounts,
+                                             line1_node_pseudotime, line1_pseudotime,
+                                             window, adjust.window = T)
+line2_node_exp_mtx <- nodeExpressionEstimate(line2@assays@data@listData$logcounts,
+                                             line2_node_pseudotime, line2_pseudotime, 
+                                             window, adjust.window = T)
+line1_node_exp_mtx <- line1_node_exp_mtx[features, ]
+line2_node_exp_mtx <- line2_node_exp_mtx[features, ]
+## find aligned path
+penalty_mtx <- dis_mtx_calculator(as.matrix(line1_node_exp_mtx), as.matrix(line2_node_exp_mtx), "spearman")
+## Find optimal path through the dissimilarity matrix then cut and matches that have high dissimilarity
+path_uncut <- pathfind(penalty_mtx, cut_type = "minimum", method = "mean")
+path_cut <- cut_deviate(path_uncut, penalty_mtx, method = "mean")
+PlotAlignment(path_cut, penalty_mtx)
+PlotOutput(line1_tree, line2_tree, path_cut)
+## adjust pseudotime
+adjustedPseudotime <- chunk_node(line1_tree$pseudotime, line2_tree$pseudotime, path_cut)
+line1_tree_new <- line1_tree
+line1_tree_new$pseudotime <- data.frame(adjustedPseudotime$condition_1$pseudotime, 
+                                        row.names = row.names(line1_tree$pseudotime))
+line2_tree_new <- line2_tree
+line2_tree_new$pseudotime <- data.frame(adjustedPseudotime$condition_2$pseudotime, 
+                                        row.names = row.names(line2_tree$pseudotime))
+PlotOutput(line1_tree_new, line2_tree_new, path_cut)
+line1_pseudo <- data.frame(line1$slingPseudotime_1, row.names = line1@colData@rownames)
+line1_node_pseudo_new <- data.frame(row.names(adjustedPseudotime$condition_1),
+                                    adjustedPseudotime$condition_1$pseudotime,
+                                    adjustedPseudotime$condition_1$alignment, 
+                                    row.names =row.names(adjustedPseudotime$condition_1) )
+line1_node_pseudo <- data.frame( pseudotime = line1_tree$pseudotime, 
+                                 row.names = row.names(line1_tree$pseudotime))
+line1_pseudo_new <- pseudo_cell_align(line1_pseudo , line1_node_pseudo_new, 
+                                      line1_node_pseudo, window)
+line1_pseudo_new <- line1_pseudo_new[order(match(row.names(line1_pseudo_new),
+                                                 row.names(line1_pseudo))),]
+line2_pseudo <- data.frame(line2$slingPseudotime_1, row.names = line2@colData@rownames)
+line2_node_pseudo_new <- data.frame(row.names(adjustedPseudotime$condition_2),
+                                    adjustedPseudotime$condition_2$pseudotime, 
+                                    adjustedPseudotime$condition_2$align, 
+                                    row.names =row.names(adjustedPseudotime$condition_2) )
+line2_node_pseudo <- data.frame(pseudotime =line2_tree$pseudotime, 
+                                row.names = row.names(line2_tree$pseudotime))
+line2_pseudo_new <- pseudo_cell_align(line2_pseudo , line2_node_pseudo_new, 
+                                      line2_node_pseudo, window)
+line2_pseudo_new <- line2_pseudo_new[order(match(row.names(line2_pseudo_new), 
+                                                 row.names(line2_pseudo))),]
+line1$oldPseudotime <- line1$slingPseudotime_1
+line1$newPseudotime <- line1_pseudo_new$pseudotime
+line2$oldPseudotime <- line2$slingPseudotime_1
+line2$newPseudotime <- line2_pseudo_new$pseudotime
+line1$Status <- as.factor(line1_pseudo_new$status)
+line2$Status <- as.factor(line2_pseudo_new$status)
+## perform TrajDE
+output <- TrajDE(list(line1, line2), list(line1_node_pseudo, line2_node_pseudo), 
+                 path_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, 
+                 logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T)
+## DE genes
+sigW2 <- output[[1]][[2]] # 466
+sigW3 <- output[[1]][[3]] # 745
+sigW4 <- output[[1]][[4]] # 829
+
+# Seurat, use wilcox same as TrAGEDy
+sigES <- DE(test1, "celltype_1", "E.S.1", "E.S/M.S.10") # 410
+sigLS <- DE(test1, "celltype_1", "L.S.4", "L.S.6") # 1531
+sigS <- DE(test1, "celltype_1", c("E.S.1", "M.S.8", "M.S/L.S.11", "L.S.4"), 
+           c("E.S/M.S.10", "L.S.6")) # 603
